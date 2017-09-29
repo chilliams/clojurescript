@@ -12,7 +12,10 @@
             [clojure.string :as string])
   (:import [java.io File]
            [java.net URL URLClassLoader]
-           [java.util.zip ZipFile ZipEntry]))
+           [java.util.zip ZipFile ZipEntry]
+           [com.google.javascript.jscomp.deps JsFileParser]
+           [java.util.logging Logger]
+           [com.google.javascript.jscomp LoggerErrorManager]))
 
 ; taken from pomegranate/dynapath
 ; https://github.com/tobias/dynapath/blob/master/src/dynapath/util.clj
@@ -100,23 +103,21 @@ case."
 
 (defn parse-js-ns
   "Given the lines from a JavaScript source file, parse the provide
-  and require statements and return them in a map. Assumes that all
-  provide and require statements appear before the first function
-  definition."
+  and require statements and return them in a map."
   [lines]
-  (letfn [(conj-in [m k v] (update-in m [k] (fn [old] (conj old v))))]
-    (->> (for [line lines x (string/split line #";")] x)
-         (map string/trim)
-         (take-while #(not (re-matches #".*=[\s]*function\(.*\)[\s]*[{].*" %)))
-         (map #(re-matches #".*goog\.(provide|require)\(['\"](.*)['\"]\)" %))
-         (remove nil?)
-         (map #(drop 1 %))
-         (reduce (fn [m ns]
-                   (let [munged-ns (string/replace (last ns) "_" "-")]
-                     (if (= (first ns) "require")
-                       (conj-in m :requires munged-ns)
-                       (conj-in m :provides munged-ns))))
-                 {:requires [] :provides []}))))
+  (let [error-manager (new LoggerErrorManager (Logger/getAnonymousLogger))
+        file-parser (new JsFileParser error-manager)
+        dependency-info (.parseFile
+                         file-parser
+                         ""
+                         ""
+                         (string/join "\n" lines))
+        requires (vec (.getRequires dependency-info))
+        provides (vec (.getProvides dependency-info))
+        is-module (.isModule dependency-info)]
+    {:provides provides
+     :requires requires
+     :is-module is-module}))
 
 (defprotocol IJavaScript
   (-foreign? [this] "Whether the Javascript represents a foreign
@@ -128,7 +129,8 @@ case."
   (-relative-path [this] [this opts] "Relative path for this JavaScript.")
   (-provides [this] "A list of namespaces that this JavaScript provides.")
   (-requires [this] "A list of namespaces that this JavaScript requires.")
-  (-source [this] [this opts] "The JavaScript source string."))
+  (-source [this] [this opts] "The JavaScript source string.")
+  (-is-module [this] "Whether the namespace is a Closure module or not."))
 
 (defn get-file [lib-spec index]
   (or (:file lib-spec)

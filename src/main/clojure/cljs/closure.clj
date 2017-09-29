@@ -422,7 +422,7 @@
         (with-open [reader (io/reader (deps/-url this opts))]
           (slurp reader))))))
 
-(defrecord JavaScriptFile [foreign ^URL url ^URL source-url provides requires lines source-map]
+(defrecord JavaScriptFile [foreign ^URL url ^URL source-url provides requires lines source-map is-module]
   deps/IJavaScript
   (-foreign? [this] foreign)
   (-closure-lib? [this] (:closure-lib this))
@@ -436,16 +436,17 @@
   (-source [this opts]
     (with-open [reader (io/reader url)]
       (slurp reader)))
+  (-is-module [this] is-module)
   ISourceMap
   (-source-url [this] source-url)
   (-source-map [this] source-map))
 
 (defn javascript-file
   ([foreign ^URL url provides requires]
-     (javascript-file foreign url nil provides requires nil nil))
-  ([foreign ^URL url source-url provides requires lines source-map]
+     (javascript-file foreign url nil provides requires nil nil false))
+  ([foreign ^URL url source-url provides requires lines source-map is-module]
     (assert (first provides) (str source-url " does not provide a namespace"))
-    (JavaScriptFile. foreign url source-url (map name provides) (map name requires) lines source-map)))
+    (JavaScriptFile. foreign url source-url (map name provides) (map name requires) lines source-map is-module)))
 
 (defn map->javascript-file [m]
   (merge
@@ -458,7 +459,8 @@
       (:provides m)
       (:requires m)
       (:lines m)
-      (:source-map m))
+      (:source-map m)
+      (:is-module m))
     (when-let [source-file (:source-file m)]
       {:source-file source-file})
     (when-let [out-file (:out-file m)]
@@ -1446,7 +1448,9 @@
                     ;; under Node.js we emit native `require`s for these
                     (= :nodejs (:target opts))
                     (filter (complement ana/node-module-dep?))))
-         "]);\n")))
+         "], "
+         (boolean (deps/-is-module input))
+         ");\n")))
 
 (defn deps-file
   "Return a deps file string for a sequence of inputs."
