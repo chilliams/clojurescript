@@ -350,7 +350,7 @@
   (-source-map [this] "Return the CLJS compiler generated JS source mapping"))
 
 (extend-protocol deps/IJavaScript
-  
+
   String
   (-foreign? [this] false)
   (-closure-lib? [this] false)
@@ -359,7 +359,7 @@
   (-provides [this] (:provides (deps/parse-js-ns (string/split-lines this))))
   (-requires [this] (:requires (deps/parse-js-ns (string/split-lines this))))
   (-source [this] this)
-  
+
   clojure.lang.IPersistentMap
   (-foreign? [this] (:foreign this))
   (-closure-lib? [this] (:closure-lib this))
@@ -374,7 +374,7 @@
                     s (with-open [reader (io/reader (deps/-url this))]
                         (slurp reader)))))
 
-(defrecord JavaScriptFile [foreign ^URL url ^URL source-url provides requires lines source-map]
+(defrecord JavaScriptFile [foreign ^URL url ^URL source-url provides requires lines source-map is-module]
   deps/IJavaScript
   (-foreign? [this] foreign)
   (-closure-lib? [this] (:closure-lib this))
@@ -386,15 +386,16 @@
     (with-open [reader (io/reader url)]
       (slurp reader)))
   ISourceMap
+  (-is-module [this] is-module)
   (-source-url [this] source-url)
   (-source-map [this] source-map))
 
 (defn javascript-file
   ([foreign ^URL url provides requires]
-     (javascript-file foreign url nil provides requires nil nil))
-  ([foreign ^URL url source-url provides requires lines source-map]
+     (javascript-file foreign url nil provides requires nil nil false))
+  ([foreign ^URL url source-url provides requires lines source-map is-module]
     (assert (first provides) (str source-url " does not provide a namespace"))
-    (JavaScriptFile. foreign url source-url (map name provides) (map name requires) lines source-map)))
+    (JavaScriptFile. foreign url source-url (map name provides) (map name requires) lines source-map is-module)))
 
 (defn map->javascript-file [m]
   (merge
@@ -407,7 +408,8 @@
       (:provides m)
       (:requires m)
       (:lines m)
-      (:source-map m))
+      (:source-map m)
+      (:is-module m))
     (when (:closure-lib m)
       {:closure-lib true})
     (when (:macros-ns m)
@@ -478,7 +480,7 @@
   returns a JavaScriptFile. In either case the return value satisfies
   IJavaScript."
   [^File file {:keys [output-file] :as opts}]
-    (if output-file 
+    (if output-file
       (let [out-file (io/file (util/output-directory opts) output-file)]
         (compiled-file (comp/compile-file file out-file opts)))
       (let [path (.getPath ^File file)]
@@ -564,17 +566,17 @@
     (case (.getProtocol this)
       "file" (-find-sources (io/file this) opts)
       "jar" (find-jar-sources this opts)))
-  
+
   clojure.lang.PersistentList
   (-compile [this opts]
     (compile-form-seq [this]))
   (-find-sources [this opts]
     [(ana/parse-ns [this] opts)])
-  
+
   String
   (-compile [this opts] (-compile (io/file this) opts))
   (-find-sources [this opts] (-find-sources (io/file this) opts))
-  
+
   clojure.lang.PersistentVector
   (-compile [this opts] (compile-form-seq this))
   (-find-sources [this opts]
@@ -1336,7 +1338,7 @@
 
   ;; optimize a ClojureScript form
   (optimize {:optimizations :simple} (-compile '(def x 3) {}))
-  
+
   ;; optimize a project
   (println (->> (-compile "samples/hello/src" {})
                 (apply add-dependencies {})
@@ -1400,7 +1402,9 @@
          ;; under Node.js runtime require is possible
          (when-not (= :nodejs (:target opts))
            (ns-list (deps/-requires input)))
-         "]);\n")))
+         "], "
+         (boolean (deps/-is-module input))
+         ");\n")))
 
 (defn deps-file
   "Return a deps file string for a sequence of inputs."
@@ -1727,7 +1731,7 @@
       (output-deps-file opts disk-sources))))
 
 (comment
-  
+
   ;; output unoptimized alone
   (output-unoptimized {} "goog.provide('test');\ngoog.require('cljs.core');\nalert('hello');\n")
   ;; output unoptimized with all dependencies

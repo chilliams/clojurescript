@@ -11,7 +11,10 @@
             [clojure.string :as string])
   (:import [java.io File]
            [java.net URL URLClassLoader]
-           [java.util.zip ZipFile ZipEntry]))
+           [java.util.zip ZipFile ZipEntry]
+           [java.util.logging Logger]
+           [com.google.javascript.jscomp LoggerErrorManager]
+           [com.google.javascript.jscomp.deps JsFileParser]))
 
 ; taken from pomegranate/dynapath
 ; https://github.com/tobias/dynapath/blob/master/src/dynapath/util.clj
@@ -65,7 +68,7 @@ If no ClassLoader is provided, RT/baseLoader is assumed."
     (when (.exists file)
       (map to-url (filter #(.endsWith ^String (.getName ^File %) ".js") (file-seq (io/file path)))))))
 
-(defn find-js-classpath 
+(defn find-js-classpath
   "Returns a seq of URLs of all JavaScript files on the classpath."
   [path]
   (->> (all-classpath-urls)
@@ -98,23 +101,21 @@ case."
 
 (defn parse-js-ns
   "Given the lines from a JavaScript source file, parse the provide
-  and require statements and return them in a map. Assumes that all
-  provide and require statements appear before the first function
-  definition."
+  and require statements and return them in a map."
   [lines]
-  (letfn [(conj-in [m k v] (update-in m [k] (fn [old] (conj old v))))]
-    (->> (for [line lines x (string/split line #";")] x)
-         (map string/trim)
-         (take-while #(not (re-matches #".*=[\s]*function\(.*\)[\s]*[{].*" %)))
-         (map #(re-matches #".*goog\.(provide|require)\(['\"](.*)['\"]\)" %))
-         (remove nil?)
-         (map #(drop 1 %))
-         (reduce (fn [m ns]
-                   (let [munged-ns (string/replace (last ns) "_" "-")]
-                     (if (= (first ns) "require")
-                       (conj-in m :requires munged-ns)
-                       (conj-in m :provides munged-ns))))
-                 {:requires [] :provides []}))))
+  (let [error-manager (new LoggerErrorManager (Logger/getAnonymousLogger))
+        file-parser (new JsFileParser error-manager)
+        dependency-info (.parseFile
+                         file-parser
+                         ""
+                         ""
+                         (string/join "\n" lines))
+        requires (vec (.getRequires dependency-info))
+        provides (vec (.getProvides dependency-info))
+        is-module (.isModule dependency-info)]
+    {:provides provides
+     :requires requires
+     :is-module is-module}))
 
 (defprotocol IJavaScript
   (-foreign? [this] "Whether the Javascript represents a foreign
@@ -126,7 +127,8 @@ case."
   (-relative-path [this] "Relative path for this JavaScript.")
   (-provides [this] "A list of namespaces that this JavaScript provides.")
   (-requires [this] "A list of namespaces that this JavaScript requires.")
-  (-source [this] "The JavaScript source string."))
+  (-source [this] "The JavaScript source string.")
+  (-is-module [this] "Whether the namespace is a Closure module or not."))
 
 (defn build-index
   "Index a list of dependencies by namespace and file name. There can
