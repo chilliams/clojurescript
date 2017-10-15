@@ -132,6 +132,10 @@ case."
   (-source [this] [this opts] "The JavaScript source string.")
   (-is-module [this] "Whether the namespace is a Closure module or not."))
 
+(extend-type java.lang.Object
+  IJavaScript
+  (-is-module [this] false))
+
 (defn get-file [lib-spec index]
   (or (:file lib-spec)
       (some (fn [provide] (get-in index [provide :file]))
